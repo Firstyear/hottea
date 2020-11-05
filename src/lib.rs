@@ -1,4 +1,4 @@
-use ocl::{ProQue, Event, flags, SpatialDims};
+use ocl::{flags, Event, ProQue, SpatialDims};
 
 // Note: some rust types differ to C, but have equivalent memory layout which we
 // require in this operation. They are:
@@ -54,8 +54,7 @@ struct HotTea {}
 
 impl HotTea {
     pub fn new() -> Self {
-        HotTea {
-        }
+        HotTea {}
     }
 
     pub(crate) fn do_mean_ocl(d: &[f64]) -> f64 {
@@ -68,7 +67,7 @@ impl HotTea {
         if step == 1 {
             // Each work group would only have to submit/manage 1 item, so there is no point
             // in submitting to the GPU - just burn CPU time instead.
-            return Self::do_mean_cpu(d)
+            return Self::do_mean_cpu(d);
         }
 
         // Okay, so each work set now we know must do at least 2 ops or more. Begin by creating
@@ -84,13 +83,14 @@ impl HotTea {
                     Some(WG_SIZE),
                     None,
                 )
-                .expect("Failed to create dimensions")
+                .expect("Failed to create dimensions"),
             )
             .build()
             .expect("failed to setup queue");
 
         // Setup the input buffer which is step * WG_SIZE, and allocate 0's at the end.
-        let input_buffer = pro_que.buffer_builder()
+        let input_buffer = pro_que
+            .buffer_builder()
             .len(WG_SIZE * step)
             // Define the input as read_only. This allows certain memory optimisations to occur
             // which increase performance ... for ... raisins >.>
@@ -105,7 +105,8 @@ impl HotTea {
 
         let mut write_event = Event::empty();
         unsafe {
-            input_buffer.write(d)
+            input_buffer
+                .write(d)
                 .enew(&mut write_event)
                 .block(false)
                 .enq()
@@ -113,14 +114,16 @@ impl HotTea {
         }
 
         // Create an output buffer, which is sized to the dimensions of the worksets.
-        let res_buffer = pro_que.create_buffer::<f64>()
+        let res_buffer = pro_que
+            .create_buffer::<f64>()
             .expect("failed to create buffer");
 
         // Create the reduce kernel. This is the work unit that will
         // be run on the GPU. Note the name f64sum matches the OCL
         // C definition at the top of the source. This is also where
         // we supply our arguments to the kernel.
-        let kernel1 = pro_que.kernel_builder("f64sum")
+        let kernel1 = pro_que
+            .kernel_builder("f64sum")
             .arg(&input_buffer)
             .arg(&res_buffer)
             .arg(step as u64)
@@ -148,7 +151,8 @@ impl HotTea {
         // block(true) to say we want this to actually force this
         // call to wait until the read is completed.
         unsafe {
-            res_buffer.read(&mut res)
+            res_buffer
+                .read(&mut res)
                 .ewait(&mut k1_event)
                 .block(true)
                 .enq()
@@ -179,11 +183,7 @@ impl HotTea {
         varience.sqrt()
     }
 
-    pub fn test(
-        &self,
-        x1: &[f64],
-        x2: &[f64],
-    ) -> f64 {
+    pub fn test(&self, x1: &[f64], x2: &[f64]) -> f64 {
         // Stash len
         let n1 = x1.len();
         let n2 = x2.len();
@@ -207,14 +207,9 @@ impl HotTea {
         let df: f64 = n1 + n2 - 2.0;
 
         // Start doing calculamations, beep boop.
-        let poolvar = (
-            ((n1 - 1.0) * (sd1 * sd1)) +
-            ((n2 - 1.0) * (sd2 * sd2))
-        ) / df;
+        let poolvar = (((n1 - 1.0) * (sd1 * sd1)) + ((n2 - 1.0) * (sd2 * sd2))) / df;
 
-        let ta = poolvar * (
-                (1.0 / n1) + (1.0 / n2)
-            );
+        let ta = poolvar * ((1.0 / n1) + (1.0 / n2));
         let t = (x1_mean - x2_mean) / ta.sqrt();
 
         println!("{:?}", t);
@@ -230,69 +225,15 @@ mod tests {
     fn hottea_t_test_basic() {
         let t = HotTea::new();
         let a = [
-                3.45,
-                4.97,
-                4.46,
-                5.03,
-                4.49,
-                4.35,
-                3.54,
-                5.53,
-                4.67,
-                3.99,
-                4.09,
-                3.54,
-                4.23,
-                2.15,
-                3.92,
-                3.15,
-                6.79,
-                4.27,
-                2.99,
-                4.92,
-                5.24,
-                3.98,
-                3.74,
-                3.15,
-                3.30,
-                3.58,
-                5.29,
-                2.95,
-                2.51,
-                3.96,
-            ];
+            3.45, 4.97, 4.46, 5.03, 4.49, 4.35, 3.54, 5.53, 4.67, 3.99, 4.09, 3.54, 4.23, 2.15,
+            3.92, 3.15, 6.79, 4.27, 2.99, 4.92, 5.24, 3.98, 3.74, 3.15, 3.30, 3.58, 5.29, 2.95,
+            2.51, 3.96,
+        ];
         let b = [
-                6.71,
-                6.25,
-                6.16,
-                5.55,
-                5.22,
-                4.66,
-                6.07,
-                6.04,
-                5.48,
-                5.38,
-                5.66,
-                5.39,
-                6.16,
-                4.85,
-                5.79,
-                6.10,
-                6.19,
-                5.63,
-                7.03,
-                6.98,
-                6.44,
-                6.66,
-                4.84,
-                7.05,
-                6.57,
-                5.46,
-                6.53,
-                6.08,
-                6.36,
-                4.04,
-            ];
+            6.71, 6.25, 6.16, 5.55, 5.22, 4.66, 6.07, 6.04, 5.48, 5.38, 5.66, 5.39, 6.16, 4.85,
+            5.79, 6.10, 6.19, 5.63, 7.03, 6.98, 6.44, 6.66, 4.84, 7.05, 6.57, 5.46, 6.53, 6.08,
+            6.36, 4.04,
+        ];
 
         // Check some basic properties to be sure we are correct.
         // We know that the ocl and cpu impls are matching from below,
@@ -348,7 +289,3 @@ mod tests {
         assert!(m_b == 37.094473981982816);
     }
 }
-
-
-
-
