@@ -12,7 +12,7 @@ use ocl::{ProQue, Event, flags, SpatialDims};
 // Additionally, OpenCL C has some specific elements that differ to normal C, but they
 // are probably beyond the scope of this example.
 
-const src: &str = r#"
+const OCL_SRC: &str = r#"
     __kernel void f64sum(
         __global double *input_buffer,
         __global double *res_buffer,
@@ -45,7 +45,9 @@ const src: &str = r#"
 "#;
 
 // How many GPU kernels should be run in parallel?
-// const WG_SIZE: usize = 64;
+#[cfg(not(test))]
+const WG_SIZE: usize = 64;
+#[cfg(test)]
 const WG_SIZE: usize = 8;
 
 struct HotTea {}
@@ -56,7 +58,7 @@ impl HotTea {
         }
     }
 
-    fn do_mean_ocl(d: &[f64]) -> f64 {
+    pub(crate) fn do_mean_ocl(d: &[f64]) -> f64 {
         // Based on the size of our wg, how many elements per kernel?
         let step = if d.len() % WG_SIZE == 0 {
             d.len() / WG_SIZE
@@ -72,7 +74,7 @@ impl HotTea {
         // Okay, so each work set now we know must do at least 2 ops or more. Begin by creating
         // a program-work-queue on the GPU.
         let pro_que = ProQue::builder()
-            .src(src)
+            .src(OCL_SRC)
             .dims(
                 // This is the dimension or parallel computation definition for the GPU.
                 SpatialDims::new(
@@ -158,21 +160,21 @@ impl HotTea {
         res.iter().fold(0.0, |acc, x| x + acc) / d_len
     }
 
-    fn do_sd_ocl(d: &[f64], x: f64, c: f64) -> f64 {
+    pub(crate) fn do_sd_ocl(d: &[f64], x: f64, c: f64) -> f64 {
         // TODO: Actually write the OCL version.
         Self::do_sd_cpu(d, x, c)
     }
 
-    fn do_mean_cpu(d: &[f64]) -> f64 {
+    pub(crate) fn do_mean_cpu(d: &[f64]) -> f64 {
         let d_len = f64::from(d.len() as u32);
         d.iter().fold(0.0, |acc, x| x + acc) / d_len
     }
 
-    fn do_sd_cpu(d: &[f64], x: f64, c: f64) -> f64 {
+    pub(crate) fn do_sd_cpu(d: &[f64], x: f64, c: f64) -> f64 {
         let varience: f64 = d.iter().fold(0.0, |acc, i| {
             let diff = x - i;
             acc + (diff * diff)
-        }) / c;
+        }) / (c - 1.0);
 
         varience.sqrt()
     }
@@ -181,7 +183,7 @@ impl HotTea {
         &self,
         x1: &[f64],
         x2: &[f64],
-    ) -> () {
+    ) -> f64 {
         // Stash len
         let n1 = x1.len();
         let n2 = x2.len();
@@ -216,6 +218,7 @@ impl HotTea {
         let t = (x1_mean - x2_mean) / ta.sqrt();
 
         println!("{:?}", t);
+        t
     }
 }
 
@@ -224,10 +227,9 @@ mod tests {
     use crate::HotTea;
 
     #[test]
-    fn it_works() {
+    fn hottea_t_test_basic() {
         let t = HotTea::new();
-        t.test(
-            &[
+        let a = [
                 3.45,
                 4.97,
                 4.46,
@@ -258,8 +260,8 @@ mod tests {
                 2.95,
                 2.51,
                 3.96,
-            ],
-            &[
+            ];
+        let b = [
                 6.71,
                 6.25,
                 6.16,
@@ -290,8 +292,60 @@ mod tests {
                 6.08,
                 6.36,
                 4.04,
-            ]
-        );
+            ];
+
+        // Check some basic properties to be sure we are correct.
+        // We know that the ocl and cpu impls are matching from below,
+        // so we only use ocl here.
+        let m_a = HotTea::do_mean_ocl(&a);
+        let m_b = HotTea::do_mean_ocl(&b);
+        let s_a = HotTea::do_sd_ocl(&a, m_a, 30.0);
+        let s_b = HotTea::do_sd_ocl(&b, m_b, 30.0);
+
+        // 0.734820
+        println!("{:?}, {:?}", s_a, s_b);
+        assert!(s_a == 0.9798757251721308);
+        assert!(s_b == 0.7348204096803238);
+
+        assert!(t.test(&a, &b) == -8.213501426846603);
+    }
+
+    #[test]
+    fn hottea_mean_basic() {
+        let vec1: Vec<f64> = vec![1.0f64; 128];
+        let m_a = HotTea::do_mean_cpu(vec1.as_slice());
+        let m_b = HotTea::do_mean_ocl(vec1.as_slice());
+        assert!(m_a == 1.0);
+        assert!(m_b == 1.0);
+
+        let vec2: Vec<f64> = (0u32..128).map(|v| f64::from(v)).collect();
+        let m_a = HotTea::do_mean_cpu(vec2.as_slice());
+        let m_b = HotTea::do_mean_ocl(vec2.as_slice());
+        assert!(m_a == 63.5);
+        assert!(m_b == 63.5);
+    }
+
+    #[test]
+    fn hottea_sd_basic() {
+        let vec1: Vec<f64> = vec![1.0f64; 128];
+        let l: u32 = 128;
+        let m_a = HotTea::do_sd_cpu(vec1.as_slice(), 1.0, f64::from(l));
+        let m_b = HotTea::do_sd_ocl(vec1.as_slice(), 1.0, f64::from(l));
+        assert!(m_a == 0.0);
+        assert!(m_b == 0.0);
+
+        let vec2: Vec<f64> = vec![1.0, 8.0, -4.0, 9.0, 6.0];
+        let l: u32 = 5;
+        let m_a = HotTea::do_sd_cpu(vec2.as_slice(), 4.0, f64::from(l));
+        assert!(m_a == 5.431390245600108);
+
+        let vec3: Vec<f64> = (0u32..128).map(|v| f64::from(v)).collect();
+        let l: u32 = 128;
+        let m_a = HotTea::do_sd_cpu(vec3.as_slice(), 63.5, f64::from(l));
+        let m_b = HotTea::do_sd_ocl(vec3.as_slice(), 63.5, f64::from(l));
+        assert!(m_a == m_b);
+        assert!(m_a == 37.094473981982816);
+        assert!(m_b == 37.094473981982816);
     }
 }
 
