@@ -30,6 +30,24 @@ __kernel void f64sum(
     // Done!
 }
 
-
+__kernel void f64sd(
+    __global double *input_buffer,
+    __global double *res_buffer,
+    double mean,
+    unsigned long step,
+    unsigned long max
+    )
+{
+    // This could probably be better with true native
+    // vector ops, but that relies on step as a mul
+    // of 2.
+    size_t idx = get_local_id(0) * step;
+    double acc = 0.0;
+    for (size_t i = 0; i < step && (idx + i) < max; i++) {
+        double diff = mean - input_buffer[idx + i];
+        acc = acc + (diff * diff);
+    }
+    res_buffer[get_local_id(0)] = acc;
+}
 // End OCL C
 "#;

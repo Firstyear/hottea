@@ -158,8 +158,83 @@ impl HotTea {
     }
 
     pub(crate) fn do_sd_ocl(&mut self, d: &[f64], x: f64, c: f64) -> f64 {
-        // TODO: Actually write the OCL version.
-        self.do_sd_cpu(d, x, c)
+        let step = if d.len() % self.wg_size == 0 {
+            d.len() / self.wg_size
+        } else {
+            (d.len() / self.wg_size) + 1
+        };
+        if step == 1 {
+            return self.do_sd_cpu(d, x, c);
+        }
+
+        debug_assert!(c >= 2.0);
+        debug_assert!(f64::from(d.len() as u32) == c);
+
+        self.pro_que.set_dims(
+            SpatialDims::new(Some(1), Some(self.wg_size), None)
+                .expect("Failed to create dimensions"),
+        );
+
+        let input_buffer = self
+            .pro_que
+            .buffer_builder()
+            .len(self.wg_size * step)
+            .flags(flags::MemFlags::new().read_only())
+            .fill_val(0.0)
+            .build()
+            .expect("failed to create buffer");
+
+        let mut write_event = Event::empty();
+        unsafe {
+            input_buffer
+                .write(d)
+                .enew(&mut write_event)
+                .block(false)
+                .enq()
+                .expect("Failed to write data");
+        }
+
+        // The intermediate result buffer.
+        let res_buffer = self
+            .pro_que
+            .create_buffer::<f64>()
+            .expect("failed to create buffer");
+
+        let kernel1 = self
+            .pro_que
+            .kernel_builder("f64sd")
+            .arg(&input_buffer)
+            .arg(&res_buffer)
+            .arg(x)
+            .arg(step as u64)
+            .arg(d.len() as u64)
+            .build()
+            .expect("Fail to build kernel");
+
+        let mut k1_event = Event::empty();
+        unsafe {
+            kernel1
+                .cmd()
+                .ewait(&mut write_event)
+                .enew(&mut k1_event)
+                .enq()
+                .expect("failed to queue kernel");
+        }
+
+        let mut res: Vec<f64> = vec![0.0f64; res_buffer.len()];
+        unsafe {
+            res_buffer
+                .read(&mut res)
+                .ewait(&mut k1_event)
+                .block(true)
+                .enq()
+                .expect("Failed to queue result read");
+        };
+
+        let varience = res.iter().fold(0.0, |acc, i| i + acc) / (c - 1.0);
+        let sd = varience.sqrt();
+        debug!("sd result -> {:?}", sd);
+        sd
     }
 
     pub(crate) fn do_mean_cpu(&self, d: &[f64]) -> f64 {
@@ -236,10 +311,10 @@ mod tests {
         let s_a = t.do_sd_ocl(&a, m_a, 30.0);
         let s_b = t.do_sd_ocl(&b, m_b, 30.0);
 
-        // 0.734820
         println!("{:?}, {:?}", s_a, s_b);
-        assert!(s_a == 0.9798757251721308);
-        assert!(s_b == 0.7348204096803238);
+        // account for slight f64 differences between ocl && cpu.
+        assert!(s_a == 0.9798757251721308 || s_a == 0.9798757251721310);
+        assert!(s_b == 0.7348204096803238 || s_b == 0.7348204096803237);
 
         assert!(t.t_test(&a, &b) == -8.213501426846603);
     }
