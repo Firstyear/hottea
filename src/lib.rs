@@ -429,7 +429,7 @@ mod tests {
             let l = *l;
             println!("========= {}", l);
             let vec4: Vec<f64> = (0u32..l).map(|v| f64::from(v)).collect();
-            let x: f64 = t.do_mean_ocl(vec4.as_slice());
+            let x: f64 = t.do_mean_cpu(vec4.as_slice());
             let mut acc = 0.0;
             let t_a_1 = Instant::now();
             for _i in 0..32 {
