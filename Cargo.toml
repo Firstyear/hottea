@@ -4,7 +4,25 @@ version = "0.1.0"
 authors = ["William Brown <william@blackhats.net.au>"]
 edition = "2018"
 
+description = "Concurrent CPU and GPU Statistics Processing"
+documentation = "https://docs.rs/hottea/latest/hottea/"
+homepage = "https://github.com/Firstyear/hottea/"
+repostiory = "https://github.com/Firstyear/hottea/"
+readme = "README.md"
+keywords = ["statistics", "high performance computing", "dmc", "concurrency",]
+# categories = ["statistics", "high performance computing",]
+license = "MPL-2.0"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+simd_support = ["packed_simd"]
 
 [dependencies]
 ocl = "0.19"
+log = "0.4"
+
+packed_simd = { version = "0.3", optional = true, package = "packed_simd_2" }
+
+[dev-dependencies]
+env_logger = "0.7"
