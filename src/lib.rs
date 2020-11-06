@@ -13,6 +13,9 @@ use ocl::{flags, Event, ProQue, SpatialDims};
 #[macro_use]
 extern crate log;
 
+#[cfg(feature = "simd_support")]
+use packed_simd::f64x8 as f64simd;
+
 // Note: some rust types differ to C, but have equivalent memory layout which we
 // require in this operation. They are:
 //  RUST       C
@@ -162,18 +165,18 @@ impl HotTea {
         res.iter().fold(0.0, |acc, x| x + acc) / d_len
     }
 
-    pub(crate) fn do_sd_ocl(&mut self, d: &[f64], x: f64, c: f64) -> f64 {
+    pub(crate) fn do_sd_ocl(&mut self, d: &[f64], x: f64) -> f64 {
         let step = if d.len() % self.wg_size == 0 {
             d.len() / self.wg_size
         } else {
             (d.len() / self.wg_size) + 1
         };
         if step == 1 {
-            return self.do_sd_cpu(d, x, c);
+            return self.do_sd_cpu(d, x);
         }
 
+        let c = f64::from(d.len() as u32);
         debug_assert!(c >= 2.0);
-        debug_assert!(f64::from(d.len() as u32) == c);
 
         /*
         self.pro_que.set_dims(
@@ -254,12 +257,35 @@ impl HotTea {
         d.iter().fold(0.0, |acc, x| x + acc) / d_len
     }
 
-    pub(crate) fn do_sd_cpu(&self, d: &[f64], x: f64, c: f64) -> f64 {
+    #[cfg(not(feature = "simd_support"))]
+    pub(crate) fn do_sd_cpu(&self, d: &[f64], x: f64) -> f64 {
+        let c = f64::from(d.len() as u32);
         let varience: f64 = d.iter().fold(0.0, |acc, i| {
             let diff = x - i;
             acc + (diff * diff)
         }) / (c - 1.0);
 
+        varience.sqrt()
+    }
+
+    #[cfg(feature = "simd_support")]
+    pub(crate) fn do_sd_cpu(&self, d: &[f64], x: f64) -> f64 {
+        let c = f64::from(d.len() as u32);
+        let (pre, main_set, rem) = unsafe { d.align_to::<f64simd>() };
+
+        let x_simd = f64simd::splat(x);
+        let main: f64 = main_set.iter().fold(0.0, |acc, i| {
+            let diff = x_simd - *i;
+            let inter = diff * diff;
+            acc + inter.sum()
+        });
+
+        let excess: f64 = pre.iter().chain(rem.iter()).fold(0.0, |acc, i| {
+            let diff = x - i;
+            acc + (diff * diff)
+        });
+
+        let varience = (excess + main) / (c - 1.0);
         varience.sqrt()
     }
 
@@ -281,8 +307,8 @@ impl HotTea {
         let x2_mean = self.do_mean_ocl(x2);
 
         // Calc the SD of a and b ... you know, just work it out :|
-        let sd1 = self.do_sd_ocl(x1, x1_mean, n1);
-        let sd2 = self.do_sd_ocl(x2, x2_mean, n2);
+        let sd1 = self.do_sd_ocl(x1, x1_mean);
+        let sd2 = self.do_sd_ocl(x2, x2_mean);
 
         let df: f64 = n1 + n2 - 2.0;
 
@@ -321,8 +347,8 @@ mod tests {
         // so we only use ocl here.
         let m_a = t.do_mean_ocl(&a);
         let m_b = t.do_mean_ocl(&b);
-        let s_a = t.do_sd_ocl(&a, m_a, 30.0);
-        let s_b = t.do_sd_ocl(&b, m_b, 30.0);
+        let s_a = t.do_sd_ocl(&a, m_a);
+        let s_b = t.do_sd_ocl(&b, m_b);
 
         println!("{:?}, {:?}", s_a, s_b);
         // account for slight f64 differences between ocl && cpu.
@@ -356,31 +382,28 @@ mod tests {
         let mut t = HotTea::new();
 
         let vec1: Vec<f64> = vec![1.0f64; 128];
-        let l: u32 = 128;
         let t_a_1 = Instant::now();
-        let m_a = t.do_sd_cpu(vec1.as_slice(), 1.0, f64::from(l));
+        let m_a = t.do_sd_cpu(vec1.as_slice(), 1.0);
         let t_a_2 = Instant::now();
         info!("cpu t_a -> {:?}", t_a_2 - t_a_1);
         let t_b_1 = Instant::now();
-        let m_b = t.do_sd_ocl(vec1.as_slice(), 1.0, f64::from(l));
+        let m_b = t.do_sd_ocl(vec1.as_slice(), 1.0);
         let t_b_2 = Instant::now();
         info!("ocl t_b -> {:?}", t_b_2 - t_b_1);
         assert!(m_a == 0.0);
         assert!(m_b == 0.0);
 
         let vec2: Vec<f64> = vec![1.0, 8.0, -4.0, 9.0, 6.0];
-        let l: u32 = 5;
-        let m_a = t.do_sd_cpu(vec2.as_slice(), 4.0, f64::from(l));
+        let m_a = t.do_sd_cpu(vec2.as_slice(), 4.0);
         assert!(m_a == 5.431390245600108);
 
         let vec3: Vec<f64> = (0u32..128).map(|v| f64::from(v)).collect();
-        let l: u32 = 128;
         let t_a_1 = Instant::now();
-        let m_a = t.do_sd_cpu(vec3.as_slice(), 63.5, f64::from(l));
+        let m_a = t.do_sd_cpu(vec3.as_slice(), 63.5);
         let t_a_2 = Instant::now();
         info!("cpu t_a -> {:?}", t_a_2 - t_a_1);
         let t_b_1 = Instant::now();
-        let m_b = t.do_sd_ocl(vec3.as_slice(), 63.5, f64::from(l));
+        let m_b = t.do_sd_ocl(vec3.as_slice(), 63.5);
         let t_b_2 = Instant::now();
         info!("ocl t_b -> {:?}", t_b_2 - t_b_1);
         assert!(m_a == m_b);
@@ -388,19 +411,29 @@ mod tests {
         assert!(m_b == 37.094473981982816);
 
         let data: [u32; 4] = [1024 << 3, 1024 << 7, 1024 << 14, 1 << 28];
+        // let data: [u32; 1] = [1 << 28];
         for l in &data {
             let l = *l;
             println!("========= {}", l);
             let vec4: Vec<f64> = (0u32..l).map(|v| f64::from(v)).collect();
             let x: f64 = t.do_mean_ocl(vec4.as_slice());
+            let mut acc = 0.0;
             let t_a_1 = Instant::now();
-            let m_a = t.do_sd_cpu(vec4.as_slice(), x, f64::from(l));
+            for _i in 0..32 {
+                let m_a = t.do_sd_cpu(vec4.as_slice(), x);
+                acc += m_a;
+            }
             let t_a_2 = Instant::now();
+            debug!("{:?}", acc);
             info!("cpu t_a -> {:?}", t_a_2 - t_a_1);
             info!("cpu t_a -> {:?}", (t_a_2 - t_a_1).as_nanos());
             let t_b_1 = Instant::now();
-            let m_b = t.do_sd_ocl(vec4.as_slice(), x, f64::from(l));
+            for _i in 0..32 {
+                let m_b = t.do_sd_ocl(vec4.as_slice(), x);
+                acc += m_b;
+            }
             let t_b_2 = Instant::now();
+            debug!("{:?}", acc);
             info!("ocl t_b -> {:?}", t_b_2 - t_b_1);
             info!("ocl t_b -> {:?}", (t_b_2 - t_b_1).as_nanos());
         }
