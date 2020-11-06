@@ -252,9 +252,22 @@ impl HotTea {
         sd
     }
 
+    #[cfg(not(feature = "simd_support"))]
     pub(crate) fn do_mean_cpu(&self, d: &[f64]) -> f64 {
         let d_len = f64::from(d.len() as u32);
         d.iter().fold(0.0, |acc, x| x + acc) / d_len
+    }
+
+    #[cfg(feature = "simd_support")]
+    pub(crate) fn do_mean_cpu(&self, d: &[f64]) -> f64 {
+        let d_len = f64::from(d.len() as u32);
+        let (pre, main_set, rem) = unsafe { d.align_to::<f64simd>() };
+
+        let main: f64 = main_set.iter().fold(0.0, |acc, i| acc + i.sum());
+
+        let excess: f64 = pre.iter().chain(rem.iter()).fold(0.0, |acc, i| i + acc);
+
+        (excess + main) / d_len;
     }
 
     #[cfg(not(feature = "simd_support"))]
