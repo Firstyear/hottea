@@ -28,7 +28,7 @@ extern crate log;
 #[cfg(not(test))]
 const WG_SIZE: usize = 64;
 #[cfg(test)]
-const WG_SIZE: usize = 8;
+const WG_SIZE: usize = 4;
 
 // This module contains the OCL kernel sources
 // we plan to use. See oclc.rs.
@@ -45,10 +45,15 @@ impl HotTea {
         // a program-work-queue on the GPU.
         let pro_que = ProQue::builder()
             .src(oclc::SRC)
+            .queue_properties(flags::CommandQueueProperties::OUT_OF_ORDER_EXEC_MODE_ENABLE)
             .build()
             .expect("failed to setup queue");
 
         let wg_size = WG_SIZE;
+
+        info!("OCL device name -> {:?}", pro_que.device().name());
+        info!("OCL device vendor -> {:?}", pro_que.device().vendor());
+        info!("OCL device version -> {:?}", pro_que.device_version());
 
         HotTea { pro_que, wg_size }
     }
@@ -170,6 +175,13 @@ impl HotTea {
         debug_assert!(c >= 2.0);
         debug_assert!(f64::from(d.len() as u32) == c);
 
+        /*
+        self.pro_que.set_dims(
+            SpatialDims::new(Some(1), Some(self.wg_size), None)
+                .expect("Failed to create dimensions"),
+        );
+        */
+
         self.pro_que.set_dims(
             SpatialDims::new(Some(1), Some(self.wg_size), None)
                 .expect("Failed to create dimensions"),
@@ -287,6 +299,7 @@ impl HotTea {
 #[cfg(test)]
 mod tests {
     use crate::HotTea;
+    use std::time::Instant;
 
     #[test]
     fn hottea_t_test_basic() {
@@ -344,8 +357,14 @@ mod tests {
 
         let vec1: Vec<f64> = vec![1.0f64; 128];
         let l: u32 = 128;
+        let t_a_1 = Instant::now();
         let m_a = t.do_sd_cpu(vec1.as_slice(), 1.0, f64::from(l));
+        let t_a_2 = Instant::now();
+        info!("cpu t_a -> {:?}", t_a_2 - t_a_1);
+        let t_b_1 = Instant::now();
         let m_b = t.do_sd_ocl(vec1.as_slice(), 1.0, f64::from(l));
+        let t_b_2 = Instant::now();
+        info!("ocl t_b -> {:?}", t_b_2 - t_b_1);
         assert!(m_a == 0.0);
         assert!(m_b == 0.0);
 
@@ -356,10 +375,34 @@ mod tests {
 
         let vec3: Vec<f64> = (0u32..128).map(|v| f64::from(v)).collect();
         let l: u32 = 128;
+        let t_a_1 = Instant::now();
         let m_a = t.do_sd_cpu(vec3.as_slice(), 63.5, f64::from(l));
+        let t_a_2 = Instant::now();
+        info!("cpu t_a -> {:?}", t_a_2 - t_a_1);
+        let t_b_1 = Instant::now();
         let m_b = t.do_sd_ocl(vec3.as_slice(), 63.5, f64::from(l));
+        let t_b_2 = Instant::now();
+        info!("ocl t_b -> {:?}", t_b_2 - t_b_1);
         assert!(m_a == m_b);
         assert!(m_a == 37.094473981982816);
         assert!(m_b == 37.094473981982816);
+
+        let data: [u32; 4] = [1024 << 3, 1024 << 7, 1024 << 14, 1 << 28];
+        for l in &data {
+            let l = *l;
+            println!("========= {}", l);
+            let vec4: Vec<f64> = (0u32..l).map(|v| f64::from(v)).collect();
+            let x: f64 = t.do_mean_ocl(vec4.as_slice());
+            let t_a_1 = Instant::now();
+            let m_a = t.do_sd_cpu(vec4.as_slice(), x, f64::from(l));
+            let t_a_2 = Instant::now();
+            info!("cpu t_a -> {:?}", t_a_2 - t_a_1);
+            info!("cpu t_a -> {:?}", (t_a_2 - t_a_1).as_nanos());
+            let t_b_1 = Instant::now();
+            let m_b = t.do_sd_ocl(vec4.as_slice(), x, f64::from(l));
+            let t_b_2 = Instant::now();
+            info!("ocl t_b -> {:?}", t_b_2 - t_b_1);
+            info!("ocl t_b -> {:?}", (t_b_2 - t_b_1).as_nanos());
+        }
     }
 }
