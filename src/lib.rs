@@ -1,3 +1,7 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
 // #![deny(warnings)]
 #![warn(unused_extern_crates)]
 #![deny(clippy::unwrap_used)]
@@ -8,6 +12,7 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
+#[cfg(feature = "ocl_support")]
 use ocl::{flags, Event, ProQue, SpatialDims};
 
 #[macro_use]
@@ -35,14 +40,25 @@ const WG_SIZE: usize = 4;
 
 // This module contains the OCL kernel sources
 // we plan to use. See oclc.rs.
+#[cfg(feature = "ocl_support")]
 mod oclc;
+// Our processed R headers
+mod bindings;
+// Our C interfaces.
+pub mod external;
 
+#[cfg(feature = "ocl_support")]
 struct HotTea {
     pro_que: ProQue,
     wg_size: usize,
 }
 
+#[cfg(not(feature = "ocl_support"))]
+struct HotTea {
+}
+
 impl HotTea {
+    #[cfg(feature = "ocl_support")]
     pub fn new() -> Self {
         // Okay, so each work set now we know must do at least 2 ops or more. Begin by creating
         // a program-work-queue on the GPU.
@@ -61,6 +77,12 @@ impl HotTea {
         HotTea { pro_que, wg_size }
     }
 
+    #[cfg(not(feature = "ocl_support"))]
+    pub fn new() -> Self {
+        HotTea {}
+    }
+
+    #[cfg(feature = "ocl_support")]
     pub(crate) fn do_mean_ocl(&mut self, d: &[f64]) -> f64 {
         // Based on the size of our wg, how many elements per kernel?
         let step = if d.len() % self.wg_size == 0 {
@@ -165,6 +187,7 @@ impl HotTea {
         res.iter().fold(0.0, |acc, x| x + acc) / d_len
     }
 
+    #[cfg(feature = "ocl_support")]
     pub(crate) fn do_sd_ocl(&mut self, d: &[f64], x: f64) -> f64 {
         let step = if d.len() % self.wg_size == 0 {
             d.len() / self.wg_size
@@ -267,7 +290,7 @@ impl HotTea {
 
         let excess: f64 = pre.iter().chain(rem.iter()).fold(0.0, |acc, i| i + acc);
 
-        (excess + main) / d_len;
+        (excess + main) / d_len
     }
 
     #[cfg(not(feature = "simd_support"))]
@@ -302,6 +325,30 @@ impl HotTea {
         varience.sqrt()
     }
 
+    #[inline(always)]
+    #[cfg(feature = "ocl_support")]
+    pub(crate) fn do_sd(&self, d: &[f64], x: f64) -> f64 {
+        self.do_sd_ocl(d, x)
+    }
+
+    #[inline(always)]
+    #[cfg(not(feature = "ocl_support"))]
+    pub(crate) fn do_sd(&self, d: &[f64], x: f64) -> f64 {
+        self.do_sd_cpu(d, x)
+    }
+
+    #[inline(always)]
+    #[cfg(feature = "ocl_support")]
+    pub(crate) fn do_mean(&self, d: &[f64]) -> f64 {
+        self.do_mean_ocl(d)
+    }
+
+    #[inline(always)]
+    #[cfg(not(feature = "ocl_support"))]
+    pub(crate) fn do_mean(&self, d: &[f64]) -> f64 {
+        self.do_mean_cpu(d)
+    }
+
     pub fn t_test(&mut self, x1: &[f64], x2: &[f64]) -> f64 {
         // Stash len
         let n1 = x1.len();
@@ -316,12 +363,12 @@ impl HotTea {
         let n1 = f64::from(n1 as u32);
         let n2 = f64::from(n2 as u32);
 
-        let x1_mean = self.do_mean_ocl(x1);
-        let x2_mean = self.do_mean_ocl(x2);
+        let x1_mean = self.do_mean(x1);
+        let x2_mean = self.do_mean(x2);
 
         // Calc the SD of a and b ... you know, just work it out :|
-        let sd1 = self.do_sd_ocl(x1, x1_mean);
-        let sd2 = self.do_sd_ocl(x2, x2_mean);
+        let sd1 = self.do_sd(x1, x1_mean);
+        let sd2 = self.do_sd(x2, x2_mean);
 
         let df: f64 = n1 + n2 - 2.0;
 

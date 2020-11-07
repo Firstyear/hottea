@@ -15,14 +15,22 @@ license = "MPL-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+crate-type = ["cdylib"]
+
 [features]
 simd_support = ["packed_simd"]
+ocl_support = ["ocl"]
 
 [dependencies]
-ocl = "0.19"
 log = "0.4"
 
+ocl = { version = "0.19", optional = true }
 packed_simd = { version = "0.3", optional = true, package = "packed_simd_2" }
 
 [dev-dependencies]
 env_logger = "0.7"
+
+[build-dependencies]
+bindgen = "0.55.1"
+
