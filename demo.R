@@ -2,7 +2,9 @@
 library(microbenchmark)
 
 # dyn.load("target/debug/libhottea.so")
-dyn.load("target/release/libhottea.so")
+# dyn.load("target/release/libhottea.so")
+# dyn.load("target/debug/libhottea.dylib")
+dyn.load("target/release/libhottea.dylib")
 
 ht_add <- function(a, b) {
     .Call("hottea_add", a, b)

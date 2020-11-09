@@ -18,7 +18,7 @@ __kernel void f64sum(
     // Which could be 0, 1, 2 ... WG_SIZE.
     // We then multiply idx by step to get the min so say step is 2, thread 0 will do
     // 0, 1, thread 1 will do 2, 3 etc ....
-    size_t idx = get_local_id(0) * step;
+    size_t idx = get_global_id(0) * step;
     double acc = input_buffer[idx];
 
     for (size_t i = 1; i < step; i++) {
@@ -26,7 +26,7 @@ __kernel void f64sum(
     }
 
     // Write the result out to the output buffer.
-    res_buffer[get_local_id(0)] = acc;
+    res_buffer[get_global_id(0)] = acc;
     // Done!
 }
 
@@ -41,13 +41,13 @@ __kernel void f64sd(
     // This could probably be better with true native
     // vector ops, but that relies on step as a mul
     // of 2.
-    size_t idx = get_local_id(0) * step;
+    size_t idx = get_global_id(0) * step;
     double acc = 0.0;
     for (size_t i = 0; i < step && (idx + i) < max; i++) {
         double diff = mean - input_buffer[idx + i];
         acc = acc + (diff * diff);
     }
-    res_buffer[get_local_id(0)] = acc;
+    res_buffer[get_global_id(0)] = acc;
 }
 // End OCL C
 "#;
